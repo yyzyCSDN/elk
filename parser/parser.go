@@ -7615,11 +7615,19 @@ func (p *Parser) selectExpression() ast.ExpressionNode {
 	)
 }
 
-// switchExpression = "switch" expressionWithoutModifier SEPARATOR
+// switchExpression = "switch" ["!"] expressionWithoutModifier SEPARATOR
 // ("case" pattern ((SEPARATOR [statements]) | ("then" expressionWithoutModifier)) )*
 // ["else" ((SEPARATOR [statements]) | expressionWithoutModifier)]
 func (p *Parser) switchExpression() ast.ExpressionNode {
 	switchTok := p.advance()
+	// Only an adjacent `!` turns this into an exhaustive `switch!` expression,
+	// `switch !foo` (with whitespace) keeps parsing `!foo` as the matched value.
+	exhaustive := false
+	if p.lookahead.Type == token.BANG &&
+		p.lookahead.Location().StartPos.ByteOffset == switchTok.Location().EndPos.ByteOffset+1 {
+		p.advance()
+		exhaustive = true
+	}
 	val := p.expressionWithoutModifier()
 	p.swallowNewlines()
 
@@ -7667,6 +7675,14 @@ func (p *Parser) switchExpression() ast.ExpressionNode {
 		p.errorMessageLocation("switch cannot be empty", location)
 	} else if len(cases) == 0 && elsePresent {
 		p.errorMessageLocation("switch cannot only consist of else", location)
+	}
+	if exhaustive {
+		return ast.NewStrictSwitchExpressionNode(
+			location,
+			val,
+			cases,
+			els,
+		)
 	}
 	return ast.NewSwitchExpressionNode(
 		location,

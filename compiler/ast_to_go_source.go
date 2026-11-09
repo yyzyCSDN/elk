@@ -1737,8 +1737,13 @@ func (c *GoCompiler) astNodeToGoSource(node ast.Node, spliceInfo *goAstSpliceInf
 			value.FetchGoType("*ast.SwitchCaseNode"),
 		)
 	case *ast.SwitchExpressionNode:
+		constructor := "ast.NewSwitchExpressionNode"
+		if n.Exhaustive {
+			constructor = "ast.NewStrictSwitchExpressionNode"
+		}
 		return newGoValue(
-			fmt.Sprintf("ast.NewSwitchExpressionNode(%s, %s, %s, %s)",
+			fmt.Sprintf("%s(%s, %s, %s, %s)",
+				constructor,
 				c.locationToGoSource(n.Location()),
 				c.astNodeToGoSource(n.Value, spliceInfo).value,
 				astSliceToGoSource(c, "[]*ast.SwitchCaseNode", n.Cases, spliceInfo),

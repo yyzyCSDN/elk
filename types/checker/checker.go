@@ -8692,7 +8692,20 @@ func (c *Checker) checkSwitchExpressionNode(node *ast.SwitchExpressionNode, tail
 		elseType, _ := c.checkStatements(&node.ElseBody, tailPosition)
 		returnTypes = append(returnTypes, elseType)
 		c.popLocalEnv()
-	} else {
+	}
+
+	// An exhaustive `switch!` must prove at compile time that every possible
+	// value is handled by a pure branch or by the else body. When proven, nil
+	// is not injected into the result type as no value can fall through.
+	provenExhaustive := false
+	if node.Exhaustive && !c.Errors.IsFailure() {
+		provenExhaustive = (&exhaustiveness{
+			c:           c,
+			matchedType: valueType,
+		}).analyze(node)
+	}
+
+	if !hasElse && !(node.Exhaustive && provenExhaustive) {
 		returnTypes = append(returnTypes, types.Nil{})
 	}
 

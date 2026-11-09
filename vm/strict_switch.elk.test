@@ -1,0 +1,154 @@
+describe "strict switch! expression" ->
+  should "dispatch every branch of a literal union" ->
+    def classify(a: 1 | 2 | 3): Symbol
+      switch! a
+      case 1 then :one
+      case 2 then :two
+      case 3 then :three
+      end
+    end
+
+    assert! classify(1) == :one
+    assert! classify(2) == :two
+    assert! classify(3) == :three
+  end
+
+  should "keep the first matching branch in order" ->
+    var a: Int = 10
+    result :=
+      switch! a
+      case 10 then :exact
+      case n then n + 1
+      end
+    assert! result == :exact
+  end
+
+  should "evaluate the matched expression only once" ->
+    var calls: Int = 0
+    bump := ->
+      calls += 1
+      2
+    end
+    var value: Int = bump()
+
+    result :=
+      switch! value
+      case 1 then :one
+      case 2 then :two
+      case x then :other
+      end
+
+    assert! result == :two
+    assert! calls == 1
+  end
+
+  should "match nil and non nil values" ->
+    def classify(a: String?): Symbol
+      switch! a
+      case nil then :nil
+      case s then :string
+      end
+    end
+
+    assert! classify(nil) == :nil
+    assert! classify("foo") == :string
+  end
+
+  should "support nilable patterns" ->
+    def classify(a: String?): Symbol
+      switch! a
+      case s? then :present
+      end
+    end
+
+    assert! classify(nil) == :present
+    assert! classify("foo") == :present
+  end
+
+  should "support list patterns with rest in any position" ->
+    var a: any = [1, 6, 9, 20]
+    result :=
+      switch! a
+      case [first, *middle, last] then [first, middle, last]
+      case [*] then :any
+      end
+    assert! result == [1, [6, 9], 20]
+  end
+
+  should "support tuple patterns with unnamed rest" ->
+    var a: any = %[1, 6, 9, 20]
+    result :=
+      switch! a
+      case %[1, *, 14] then :d
+      case %[1, *, 20] then :e
+      case %[*] then :any
+      end
+    assert! result == :e
+  end
+
+  should "support nested list patterns" ->
+    var a: any = [1, 6, [17, 43, [71, 28]], 20]
+    result :=
+      switch! a
+      case [1, 6, [17, > 40, [71, 28]], > 15] then :matched
+      case [*] then :other
+      end
+    assert! result == :matched
+  end
+
+  should "support or and as patterns" ->
+    def classify(a: 1 | 2 | nil): Symbol
+      switch! a
+      case nil then :nil
+      case (1 || 2) as x then :value
+      end
+    end
+
+    assert! classify(1) == :value
+    assert! classify(2) == :value
+    assert! classify(nil) == :nil
+  end
+
+  should "still run dynamic regex patterns at runtime" ->
+    var a: any = "some string"
+    result :=
+      switch! a
+      case %/some str\w+/ then :regex
+      else :fallback
+      end
+    assert! result == :regex
+  end
+
+  should "still run object getter patterns at runtime" ->
+    var a: any = "foo bar"
+    result :=
+      switch! a
+      case ::Std::String(length: 7) then :seven
+      else :other
+      end
+    assert! result == :seven
+  end
+
+  should "fall back to else" ->
+    var a: any = 20
+    result :=
+      switch! a
+      case 0 then :a
+      else :e
+      end
+    assert! result == :e
+  end
+
+  should "re-prove exhaustiveness after a dynamic branch with pure branches" ->
+    def classify(a: "x" | "y"): Symbol
+      switch! a
+      case %/x/ then :regex
+      case "x" then :x
+      case "y" then :y
+      end
+    end
+
+    assert! classify("x") == :regex
+    assert! classify("y") == :y
+  end
+end

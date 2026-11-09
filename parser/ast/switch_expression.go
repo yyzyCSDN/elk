@@ -20,11 +20,15 @@ import (
 //	else
 //	  println("nothing")
 //	end
+//
+// When Exhaustive is true the node represents a `switch!` expression,
+// whose branches must be proven exhaustive at compile time.
 type SwitchExpressionNode struct {
 	TypedNodeBase
-	Value    ExpressionNode
-	Cases    []*SwitchCaseNode
-	ElseBody []StatementNode
+	Value      ExpressionNode
+	Cases      []*SwitchCaseNode
+	ElseBody   []StatementNode
+	Exhaustive bool
 }
 
 func (n *SwitchExpressionNode) splice(loc *position.Location, args *[]Node, unquote bool) Node {
@@ -33,6 +37,7 @@ func (n *SwitchExpressionNode) splice(loc *position.Location, args *[]Node, unqu
 		Value:         n.Value.splice(loc, args, unquote).(ExpressionNode),
 		Cases:         SpliceSlice(n.Cases, loc, args, unquote),
 		ElseBody:      SpliceSlice(n.ElseBody, loc, args, unquote),
+		Exhaustive:    n.Exhaustive,
 	}
 }
 
@@ -84,6 +89,7 @@ func (n *SwitchExpressionNode) traverseMap(parent Node, fn func(node, parent Nod
 	}
 
 	newNode := NewSwitchExpressionNode(n.loc, val.(ExpressionNode), cases, els)
+	newNode.Exhaustive = n.Exhaustive
 
 	return fn(newNode, parent)
 }
@@ -97,6 +103,7 @@ func (n *SwitchExpressionNode) Equal(other value.Value) bool {
 	if len(n.Cases) != len(o.Cases) ||
 		len(n.ElseBody) != len(o.ElseBody) ||
 		!n.loc.Equal(o.loc) ||
+		n.Exhaustive != o.Exhaustive ||
 		!n.Value.Equal(value.Ref(o.Value)) {
 		return false
 	}
@@ -124,6 +131,7 @@ func (n *SwitchExpressionNode) LaxEqual(other value.Value) bool {
 
 	if len(n.Cases) != len(o.Cases) ||
 		len(n.ElseBody) != len(o.ElseBody) ||
+		n.Exhaustive != o.Exhaustive ||
 		!n.Value.LaxEqual(value.Ref(o.Value)) {
 		return false
 	}
@@ -146,7 +154,11 @@ func (n *SwitchExpressionNode) LaxEqual(other value.Value) bool {
 func (n *SwitchExpressionNode) String() string {
 	var buff strings.Builder
 
-	buff.WriteString("switch ")
+	if n.Exhaustive {
+		buff.WriteString("switch! ")
+	} else {
+		buff.WriteString("switch ")
+	}
 	buff.WriteString(n.Value.String())
 	buff.WriteString("\n")
 
@@ -182,6 +194,13 @@ func NewSwitchExpressionNode(loc *position.Location, val ExpressionNode, cases [
 	}
 }
 
+// Create a new exhaustive `switch!` expression node
+func NewStrictSwitchExpressionNode(loc *position.Location, val ExpressionNode, cases []*SwitchCaseNode, els []StatementNode) *SwitchExpressionNode {
+	node := NewSwitchExpressionNode(loc, val, cases, els)
+	node.Exhaustive = true
+	return node
+}
+
 func (*SwitchExpressionNode) Class() *value.Class {
 	return value.SwitchExpressionNodeClass
 }
@@ -194,6 +213,9 @@ func (n *SwitchExpressionNode) Inspect() string {
 	var buff strings.Builder
 
 	fmt.Fprintf(&buff, "Std::Elk::AST::SwitchExpressionNode{\n  location: %s", (*value.Location)(n.loc).Inspect())
+
+	buff.WriteString(",\n  exhaustive: ")
+	fmt.Fprintf(&buff, "%t", n.Exhaustive)
 
 	buff.WriteString(",\n  value: ")
 	indent.IndentStringFromSecondLine(&buff, n.Value.Inspect(), 1)
