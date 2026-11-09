@@ -238,10 +238,13 @@ func (c *Checker) checkGenericNamedType(node *ast.GenericTypeDefinitionNode) boo
 	prevMode := c.mode
 	c.mode = namedGenericTypeDefinitionMode
 
+	// Register type parameters before checking the body so that recursive
+	// references know the parameter count and can forward them unchanged.
+	namedType.TypeParameters = typeParams
+
 	node.TypeNode = c.checkTypeNode(node.TypeNode)
 	typ := c.TypeOf(node.TypeNode)
 	namedType.Type = typ
-	namedType.TypeParameters = typeParams
 
 	c.mode = prevMode
 	c.popConstScope()
@@ -333,8 +336,15 @@ func (c *Checker) checkTypeDefinition(typedefCheck *typeDefinitionCheck, locatio
 	}
 
 	if typedefCheck.state == CHECKING_TYPEDEF {
+		if c.isLegallyRecursiveTypedef(typedefCheck, location) {
+			return true
+		}
+		typeName := types.InspectWithColor(typedefCheck.typ)
+		if name := typedefNameForCheck(typedefCheck); name != "" {
+			typeName = lexer.Colorize(name)
+		}
 		c.addFailure(
-			fmt.Sprintf("type `%s` circularly references itself", types.InspectWithColor(typedefCheck.typ)),
+			fmt.Sprintf("type `%s` circularly references itself", typeName),
 			location,
 		)
 		typedefCheck.state = ERROR_TYPEDEF
@@ -345,6 +355,15 @@ func (c *Checker) checkTypeDefinition(typedefCheck *typeDefinitionCheck, locatio
 	}
 
 	typedefCheck.state = CHECKING_TYPEDEF
+	isTypedef := isTypedefCheck(typedefCheck)
+	if isTypedef {
+		c.checkingTypedefs = append(c.checkingTypedefs, typedefNameForCheck(typedefCheck))
+	}
+	defer func() {
+		if isTypedef {
+			c.checkingTypedefs = c.checkingTypedefs[:len(c.checkingTypedefs)-1]
+		}
+	}()
 
 	oldFilename := c.Filename
 	oldConstantScopes := c.constantScopes

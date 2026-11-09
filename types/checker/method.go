@@ -3490,7 +3490,16 @@ func (c *Checker) _getMethod(typ types.Type, name symbol.Symbol, errLoc *positio
 	case types.Self:
 		return c._getMethod(c.selfType, name, errLoc, inParent, true)
 	case *types.NamedType:
+		if t.Type == nil {
+			return c.getMethodInNamespace(c.StdValue(), typ, name, errLoc, inParent, inSelf)
+		}
 		return c._getMethod(t.Type, name, errLoc, inParent, inSelf)
+	case *types.RecursiveGeneric:
+		body := c.recursiveGenericBody(t)
+		if body == t {
+			return c.getMethodInNamespace(c.StdValue(), typ, name, errLoc, inParent, inSelf)
+		}
+		return c._getMethod(body, name, errLoc, inParent, inSelf)
 	case *types.TypeParameter:
 		return c.getMethodForTypeParameter(t, name, errLoc, inParent, inSelf)
 	case *types.Generic:
@@ -3721,7 +3730,15 @@ func calculateMethodBaseScore(typ types.Type) int {
 	case *types.Generic:
 		return calculateMethodBaseScore(t.Namespace)
 	case *types.NamedType:
+		if t.Type == nil {
+			return 1
+		}
 		return calculateMethodBaseScore(t.Type)
+	case *types.RecursiveGeneric:
+		if t.Body == nil {
+			return 1
+		}
+		return calculateMethodBaseScore(t.Body)
 	case *types.Not:
 		return 100 - calculateMethodBaseScore(t.Type)
 	case *types.Any:

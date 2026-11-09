@@ -584,6 +584,12 @@ func (c *Checker) inferTypeArgumentsWithFlags(givenType, paramType types.Type, t
 			}
 			return types.NewNilable(result)
 		}
+	case *types.RecursiveGeneric:
+		body := c.recursiveGenericBody(p)
+		if body == p {
+			return p
+		}
+		return c.inferTypeArgumentsWithFlags(givenType, body, typeArgMap, errLocation, flags)
 	default:
 		return paramType
 	}
@@ -728,6 +734,26 @@ func (c *Checker) replaceTypeParametersOfGeneric(typ types.Type, generic *types.
 			return t
 		}
 		return types.NewIntersection(newElements...)
+	case *types.RecursiveGeneric:
+		if len(t.Arguments) == 0 {
+			return t
+		}
+		newArguments := make([]types.Type, len(t.Arguments))
+		var isDifferent bool
+		for i, argument := range t.Arguments {
+			result := c.replaceTypeParametersOfGeneric(argument, generic)
+			if result != argument {
+				isDifferent = true
+			}
+			newArguments[i] = result
+		}
+		if !isDifferent {
+			return t
+		}
+		if t.Definition != nil && t.Definition.Type != nil {
+			return c.internRecursiveGeneric(t.Definition, newArguments)
+		}
+		return types.NewRecursiveGeneric(t.Definition, newArguments, t.Body)
 	default:
 		return t
 	}
@@ -849,6 +875,26 @@ func (c *Checker) _replaceTypeParameters(typ types.Type, typeArgMap types.TypeAr
 			return t
 		}
 		return types.NewIntersection(newElements...)
+	case *types.RecursiveGeneric:
+		if len(t.Arguments) == 0 {
+			return t
+		}
+		newArguments := make([]types.Type, len(t.Arguments))
+		var isDifferent bool
+		for i, argument := range t.Arguments {
+			result := c._replaceTypeParameters(argument, typeArgMap, replaceMethodTypeParams)
+			if result != argument {
+				isDifferent = true
+			}
+			newArguments[i] = result
+		}
+		if !isDifferent {
+			return t
+		}
+		if t.Definition != nil && t.Definition.Type != nil {
+			return c.internRecursiveGeneric(t.Definition, newArguments)
+		}
+		return types.NewRecursiveGeneric(t.Definition, newArguments, t.Body)
 	default:
 		return t
 	}

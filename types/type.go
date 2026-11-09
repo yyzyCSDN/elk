@@ -35,7 +35,20 @@ func Traverse(typ Type, enter func(typ, parent Type) TraverseOption, leave func(
 	if leave == nil {
 		leave = noopTraverse
 	}
-	typ.traverse(nil, enter, leave)
+
+	// Guard against cyclic type graphs, which are created by legal
+	// recursive typedefs eg. `typedef A = ArrayList[A]`.
+	// Every node is visited at most once.
+	visited := make(map[Type]struct{})
+	wrappedEnter := func(typ, parent Type) TraverseOption {
+		if _, ok := visited[typ]; ok {
+			return TraverseSkip
+		}
+		visited[typ] = struct{}{}
+		return enter(typ, parent)
+	}
+
+	typ.traverse(nil, wrappedEnter, leave)
 }
 
 func DeepCopyNamespacePath(constantPath []string, oldEnv, newEnv *GlobalEnvironment) Namespace {
@@ -123,6 +136,8 @@ func DeepCopyEnv(t Type, oldEnv, newEnv *GlobalEnvironment) Type {
 	case *NamedType:
 		return ToTypeInterface(t.DeepCopyEnv(oldEnv, newEnv))
 	case *GenericNamedType:
+		return ToTypeInterface(t.DeepCopyEnv(oldEnv, newEnv))
+	case *RecursiveGeneric:
 		return ToTypeInterface(t.DeepCopyEnv(oldEnv, newEnv))
 	case *Union:
 		return ToTypeInterface(t.DeepCopyEnv(oldEnv, newEnv))

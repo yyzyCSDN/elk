@@ -189,6 +189,11 @@ type Checker struct {
 	signatureChecks            *ds.OrderedMap[string, *[]signatureCheckEntry] // map of namespaces and their methods whose signatures have to be checked
 	constantChecks             *constantDefinitionChecks
 	typeDefinitionChecks       *typeDefinitionChecks
+	checkingTypedefs           []string                                                    // stack of typedef names currently being checked, used to validate recursive cycles
+	recursiveGenericCache      map[*types.GenericNamedType][]*types.RecursiveGeneric        // interned instances of recursive generic typedefs
+	recursiveGenericBuilding   map[*types.GenericNamedType][]*types.RecursiveGeneric        // recursive instances whose body is currently being built
+	activeSubtypePairs         []subtypePair                                                // coinductive assumptions of the running subtype check
+	activeIntersectPairs       []intersectPair                                              // coinductive assumptions of the running intersection check
 	methodCache                *concurrent.Slice[*types.Method] // used in constant definition checks, the list of methods used in the current constant declaration
 	extensions                 *concurrent.Slice[*ext.Extension]
 	method                     *types.Method
@@ -691,6 +696,12 @@ func (c *Checker) checkBuiltinImports(node *ast.ProgramNode, wg *sync.WaitGroup)
 func (c *Checker) CheckProgram(node *ast.ProgramNode) compiler.Compiler {
 	var wg sync.WaitGroup
 
+	// reset per-run caches for recursive generic typedef instances
+	c.recursiveGenericCache = nil
+	c.recursiveGenericBuilding = nil
+	c.activeSubtypePairs = c.activeSubtypePairs[:0]
+	c.activeIntersectPairs = c.activeIntersectPairs[:0]
+
 	c.checkBuiltinImports(node, &wg)
 
 	// parse all files of the project concurrently
@@ -1128,8 +1139,8 @@ func (c *Checker) resolveImportPath(importPath string, checkedFileName string, l
 		importPath = filepath.Join(dirPath, importPath)
 	}
 
-	baseDir, pattern := doublestar.SplitPattern(importPath)
-	fsys := os.DirFS(baseDir)
+	baseDir, pattern := doublestar.SplitPattern(filepath.ToSlash(importPath))
+	fsys := os.DirFS(filepath.FromSlash(baseDir))
 	filePaths, err := doublestar.Glob(fsys, pattern)
 	if err != nil {
 		c.addFailure(
@@ -7676,6 +7687,14 @@ func (c *Checker) checkGenericConstantType(node *ast.GenericConstantNode) (ast.T
 			return node, fullName
 		}
 
+		if t.Type == nil {
+			// The typedef is still being checked, hence this is a recursive
+			// reference. Return a transparent recursive instance whose body is
+			// built lazily once the definition has been checked.
+			node.SetType(c.recursiveGenericFromArguments(t, typeArgumentMap))
+			return node, fullName
+		}
+
 		node.SetType(c.replaceTypeParameters(t.Type, typeArgumentMap.ArgumentMap, false))
 		return node, fullName
 	case *types.Class:
@@ -7747,6 +7766,11 @@ func (c *Checker) resolveGenericType(typ types.Type, location *position.Location
 		)
 		if !ok {
 			return types.Untyped{}
+		}
+
+		if t.Type == nil {
+			// recursive reference while the typedef is being checked
+			return c.recursiveGenericFromArguments(t, typeArgumentMap)
 		}
 
 		return c.replaceTypeParameters(t.Type, typeArgumentMap.ArgumentMap, false)

@@ -118,7 +118,17 @@ func (c *Checker) typesIntersectWithTypeArgs(a, b types.Type, typeArgs types.Typ
 }
 
 func (c *Checker) _typesIntersect(a types.Type, b types.Type, typeArgs types.TypeArgumentMap) bool {
+	// unfold transparent typedef aliases, including recursive ones
+	a = c.unfoldTransparentType(a)
+	if c.hasIntersectAssumption(a, b) {
+		return true
+	}
+	c.pushIntersectAssumption(a, b)
+	defer c.popIntersectAssumption()
+
 	switch a := a.(type) {
+	case *types.RecursiveGeneric:
+		return c._typesIntersect(c.recursiveGenericBody(a), b, typeArgs)
 	case *types.Nilable:
 		return c._typesIntersect(a.Type, b, typeArgs) || c._typesIntersect(types.Nil{}, b, typeArgs)
 	case *types.Union:
@@ -219,7 +229,10 @@ func (c *Checker) intersectsWithInterface(a types.Type, b types.Namespace, typeA
 
 // Check whether an "is a" relationship between `a` and `b` is possible.
 func (c *Checker) canBeIsA(a types.Type, b types.Type) bool {
+	a = c.unfoldTransparentType(a)
 	switch a := a.(type) {
+	case *types.RecursiveGeneric:
+		return c.canBeIsA(c.recursiveGenericBody(a), b)
 	case *types.Nilable:
 		return c.canBeIsA(a.Type, b) || c.canBeIsA(types.Nil{}, b)
 	case *types.Union:
@@ -306,7 +319,10 @@ func (c *Checker) canIntersect(a, b types.Type) bool {
 }
 
 func (c *Checker) _canIntersect(a types.Type, b types.Type) bool {
+	a = c.unfoldTransparentType(a)
 	switch a := a.(type) {
+	case *types.RecursiveGeneric:
+		return c._canIntersect(c.recursiveGenericBody(a), b)
 	case *types.Nilable:
 		return c.canBeIsA(a.Type, b) || c.canBeIsA(types.Nil{}, b)
 	case *types.Union:
@@ -436,6 +452,13 @@ func (c *Checker) containsTypeParameters(typ types.Type) bool {
 			}
 		}
 		return false
+	case *types.RecursiveGeneric:
+		for _, argument := range t.Arguments {
+			if c.containsTypeParameters(argument) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -473,7 +496,20 @@ func (c *Checker) isSubtype(a, b types.Type, errLoc *position.Location) bool {
 		return true
 	}
 
-	if bNamedType, ok := b.(*types.NamedType); ok {
+	// Transparently unfold typedef aliases, including recursive alias cycles.
+	a = c.unfoldTransparentType(a)
+	b = c.unfoldTransparentType(b)
+
+	// Coinductive subtype checking of equi-recursive type graphs: if the same
+	// pair is already being proven, assume it holds. Every recursive cycle
+	// passes through an invariant container so this assumption is positive.
+	if c.hasSubtypeAssumption(a, b) {
+		return true
+	}
+	c.pushSubtypeAssumption(a, b)
+	defer c.popSubtypeAssumption()
+
+	if bNamedType, ok := b.(*types.NamedType); ok && bNamedType.Type != nil {
 		b = bNamedType.Type
 	}
 
@@ -482,6 +518,9 @@ func (c *Checker) isSubtype(a, b types.Type, errLoc *position.Location) bool {
 	}
 	switch narrowedB := b.(type) {
 	case *types.NamedType:
+		if narrowedB.Type == nil {
+			return false
+		}
 		return c.isSubtype(a, narrowedB.Type, errLoc)
 	case types.Any, types.Void, types.Untyped:
 		return true
@@ -503,6 +542,10 @@ func (c *Checker) isSubtype(a, b types.Type, errLoc *position.Location) bool {
 
 	switch a := a.(type) {
 	case *types.NamedType:
+		if a.Type == nil {
+			// opaque alias whose body is still being checked
+			return false
+		}
 		return c.isSubtype(a.Type, b, errLoc)
 	case *types.Exact:
 		if bExact, ok := b.(*types.Exact); ok {
